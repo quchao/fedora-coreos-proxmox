@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #set -e
- 
+
 vmid="$1"
 phase="$2"
 
@@ -13,20 +13,20 @@ YQ="/usr/local/bin/yq read --exitStatus --printMode v --stripComments --"
 # ==================================================================================================================================================================
 # functions()
 #
-setup_fcoreosct()
+setup_butane()
 {
-        local CT_VER=0.7.0
+        local CT_VER=0.7.0 # GLIBC 2.32 is required for later versions
         local ARCH=x86_64
         local OS=unknown-linux-gnu # Linux
-        local DOWNLOAD_URL=https://github.com/coreos/fcct/releases/download
- 
-        [[ -x /usr/local/bin/fcos-ct ]]&& [[ "x$(/usr/local/bin/fcos-ct --version | awk '{print $NF}')" == "x${CT_VER}" ]]&& return 0
+        local DOWNLOAD_URL=https://github.com/coreos/butane/releases/download
+
+        [[ -x /usr/local/bin/butane ]]&& [[ "x$(/usr/local/bin/butane --version | awk '{print $NF}')" == "x${CT_VER}" ]]&& return 0
         echo "Setup Fedora CoreOS config transpiler..."
-        rm -f /usr/local/bin/fcos-ct
-        wget --quiet --show-progress ${DOWNLOAD_URL}/v${CT_VER}/fcct-${ARCH}-${OS} -O /usr/local/bin/fcos-ct
-        chmod 755 /usr/local/bin/fcos-ct
+        rm -f /usr/local/bin/butane
+        wget --quiet --show-progress ${DOWNLOAD_URL}/v${CT_VER}/fcct-${ARCH}-${OS} -O /usr/local/bin/butane
+        chmod 755 /usr/local/bin/butane
 }
-setup_fcoreosct
+setup_butane
 
 setup_yq()
 {
@@ -55,7 +55,7 @@ then
 	[[ -e ${COREOS_FILES_PATH}/${vmid}.ign ]]&& exit 0 # already done
 
 	mkdir -p ${COREOS_FILES_PATH} || exit 1
-		
+
 	# check config
 	cipasswd="$(qm cloudinit dump ${vmid} user | ${YQ} - 'password' 2> /dev/null)" || true # can be empty
 	[[ "x${cipasswd}" != "x" ]]&& VALIDCONFIG=true
@@ -67,7 +67,7 @@ then
 
 	echo -n "Fedora CoreOS: Generate yaml users block... "
 	echo -e "# This file is managed by Geco-iT hook-script. Do not edit.\n" > ${COREOS_FILES_PATH}/${vmid}.yaml
-	echo -e "variant: fcos\nversion: 1.1.0" >> ${COREOS_FILES_PATH}/${vmid}.yaml
+	echo -e "variant: fcos\nversion: 1.2.0" >> ${COREOS_FILES_PATH}/${vmid}.yaml
 	echo -e "# user\npasswd:\n  users:" >> ${COREOS_FILES_PATH}/${vmid}.yaml
 	ciuser="$(qm cloudinit dump ${vmid} user 2> /dev/null | grep ^user: | awk '{print $NF}')"
 	echo "    - name: \"${ciuser:-admin}\"" >> ${COREOS_FILES_PATH}/${vmid}.yaml
@@ -87,9 +87,9 @@ then
 	echo "      overwrite: true" >> ${COREOS_FILES_PATH}/${vmid}.yaml
 	echo "      contents:" >> ${COREOS_FILES_PATH}/${vmid}.yaml
 	echo "        inline: |" >> ${COREOS_FILES_PATH}/${vmid}.yaml
-	echo -e "          ${hostname,,}\n" >> ${COREOS_FILES_PATH}/${vmid}.yaml 
+	echo -e "          ${hostname,,}\n" >> ${COREOS_FILES_PATH}/${vmid}.yaml
 	echo "[done]"
-	
+
 	echo -n "Fedora CoreOS: Generate yaml network block... "
 	netcards="$(qm cloudinit dump ${vmid} network | ${YQ} - 'config[*].name' 2> /dev/null | wc -l)"
 	nameservers="$(qm cloudinit dump ${vmid} network | ${YQ} - "config[${netcards}].address[*]" | paste -s -d ";" -)"
@@ -117,7 +117,7 @@ then
 		echo -e "\n          [ipv4]" >> ${COREOS_FILES_PATH}/${vmid}.yaml
 		echo "          method=manual" >> ${COREOS_FILES_PATH}/${vmid}.yaml
 		echo "          addresses=${ipv4}/${netmask}" >> ${COREOS_FILES_PATH}/${vmid}.yaml
-		echo "          gateway=${gw}" >> ${COREOS_FILES_PATH}/${vmid}.yaml 
+		echo "          gateway=${gw}" >> ${COREOS_FILES_PATH}/${vmid}.yaml
 		echo "          dns=${nameservers}" >> ${COREOS_FILES_PATH}/${vmid}.yaml
 		echo -e "          dns-search=${searchdomain}\n" >> ${COREOS_FILES_PATH}/${vmid}.yaml
 	done
@@ -130,7 +130,7 @@ then
 	}
 
 	echo -n "Fedora CoreOS: Generate ignition config... "
-	/usr/local/bin/fcos-ct 	--pretty --strict \
+	/usr/local/bin/butane 	--pretty --strict \
 				--output ${COREOS_FILES_PATH}/${vmid}.ign \
 				${COREOS_FILES_PATH}/${vmid}.yaml 2> /dev/null
 	[[ $? -eq 0 ]] || {

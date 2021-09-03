@@ -1,12 +1,28 @@
-# motd script
+    # sshd config
+    - path: /etc/ssh/sshd_config.d/60-custom-sshd-config.conf
+      mode: 0644
+      contents:
+        inline: |
+          AcceptEnv no
+
+    # docker custom configs
+    - path: /etc/docker/daemon.json
+      mode: 0644
+      contents:
+        inline: |
+          {
+            "registry-mirrors": ["https://docker.mirrors.ustc.edu.cn"]
+          }
+
+    # motd script
     - path: /usr/local/bin/geco-motd
       mode: 0755
       contents:
         inline: |
           #!/bin/bash
-          
+
           OUT=/etc/console-login-helper-messages/motd.d/22_geco.motd
-          
+
           echo -e "\nWelcome on a server powered by\n" > ${OUT}
           echo -e '\e[33m    ______                      _ ______' >> ${OUT}
           echo -e '\e[33m   / ____/__  _________        (_)_  __/' >> ${OUT}
@@ -24,11 +40,11 @@
                 echo -e "\e[33mHDD${i} ($(basename ${disk})):\e[0m$(lsblk -n --nodeps ${disk} -o size)" >> ${OUT}
                 i=$((i+1))
           done
-          echo -e "\n\e[33mHostname:\e[0m "$(hostname -f) >> ${OUT}  
-          sleep 1; echo -e "\e[33mIPv4 Address:\e[0m $(ip route get 8.8.8.8 | awk 'NR==1 {print $7}')" >> ${OUT}
-          echo -e "\e[33mPublic IPv4 Address:\e[0m $(curl https://ipv4.icanhazip.com)\n" >> ${OUT}
+          echo -e "\n\e[33mHostname:\e[0m "$(hostname -f) >> ${OUT}
+          sleep 1; echo -e "\e[33mIPv4 Address:\e[0m $(ip route get 223.5.5.5 | awk 'NR==1 {print $7}')" >> ${OUT}
+          echo -e "\e[33mPublic IPv4 Address:\e[0m $(curl https://myip.ipip.net)\n" >> ${OUT}
 
-# apply cloudinit script
+    # apply cloudinit script
     - path: /usr/local/bin/geco-cloudinit
       mode: 0755
       contents:
@@ -62,7 +78,7 @@
           sysprep() {
             echo "Remove all ssh system keys..."
             rm -f /etc/ssh/ssh_host_*
-            
+
             echo "Clean ostree database..."
             rpm-ostree cleanup --base --pending --rollback --repomd
 
@@ -90,9 +106,9 @@
             echo -e "\nShutdown now..."
             poweroff
 
-            exit 0  
+            exit 0
           }
-          [[ "x${1}" == "xsysprep" ]]&& sysprep          
+          [[ "x${1}" == "xsysprep" ]]&& sysprep
 
           setup_yq() {
             local VER=3.4.1
@@ -258,9 +274,9 @@
             /bin/systemctl --no-block reboot
           }
 
-          exit 0 
+          exit 0
 
-# geco-issue
+    # geco-issue
     - path: /etc/console-login-helper-messages/issue.d/00_geco.issue
       mode: 0644
       contents:
@@ -273,22 +289,58 @@
            |  | .---. | .-. : | .--' | .-. | '-----' ,--.    |  |
            '  '--'  | \\   --. \\ `--. ' '-' '         |  |    |  |
             `------'   `----'  `---'  `---'          `--'    `--'
-            
+
           .
 
-# kernel config
+    # kernel config
     - path: /etc/sysctl.d/20-silence-audit.conf
-      mode: 0644      
+      mode: 0644
       contents:
         inline: |
           # Raise console message logging level from DEBUG (7) to WARNING (4)
           # to hide audit messages from the interactive console
           kernel.printk=4
 
+    # profile config
+    - path: /etc/profile.d/systemd-pager.sh
+      mode: 0644
+      contents:
+        inline: |
+          # Tell systemd to not use a pager when printing information
+          export SYSTEMD_PAGER=cat
+
+  # ref: https://github.com/coreos/docs/blob/master/os/mounting-storage.md#use-attached-storage-for-docker
+  # ref: https://coreos.github.io/butane/upgrading-fcos/#from-version-110-to-120
+  filesystems:
+    - device: /dev/sdb
+      format: ext4
+      wipe_filesystem: false
+      with_mount_unit: false
 
 # geco-motd.service
 systemd:
   units:
+    - name: var-lib-docker.mount
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Mount ephemeral to /var/lib/docker
+        Before=local-fs.target
+        [Mount]
+        What=/dev/sdb
+        Where=/var/lib/docker
+        Type=ext4
+        [Install]
+        WantedBy=local-fs.target
+
+    - name: docker.service
+      dropins:
+        - name: 10-wait-docker.conf
+          contents: |
+            [Unit]
+            After=var-lib-docker.mount
+            Requires=var-lib-docker.mount
+
     - name: geco-motd.service
       enabled: true
       contents: |
@@ -299,13 +351,14 @@ systemd:
 
         [Service]
         Type=oneshot
+        ExecStart=-/usr/bin/mkdir -p /etc/console-login-helper-messages/motd.d/
         ExecStart=/usr/local/bin/geco-motd
         RemainAfterExit=yes
 
         [Install]
         WantedBy=multi-user.target
 
-# geco-cloudinit: apply cloudinit settings on boot
+    # geco-cloudinit: apply cloudinit settings on boot
     - name: geco-cloudinit.service
       enabled: true
       contents: |
@@ -313,17 +366,17 @@ systemd:
         Description=Geco-iT Cloudinit
         Wants=network-online.target
         After=network.target network-online.target
- 
+
         [Service]
         Type=oneshot
         TimeoutStartSec=0
         ExecStart=/usr/local/bin/geco-cloudinit
         RemainAfterExit=yes
- 
+
         [Install]
         WantedBy=multi-user.target
 
-# qemu-guest-agent
+    # qemu-guest-agent
     - name: setup-qemu-guest-agent.service
       enabled: true
       contents: |
@@ -344,10 +397,33 @@ systemd:
         [Install]
         WantedBy=multi-user.target
 
-# fstrim
+    # portainer
+    - name: docker-portainer.service
+      enabled: true
+      contents: |-
+        [Unit]
+        Description=Portainer Admin Container
+        After=docker.service
+        Requires=docker.service network.target network-online.target
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        TimeoutStartSec=0
+        ExecStartPre=-/usr/bin/docker stop %n
+        ExecStartPre=-/usr/bin/docker rm %n
+        ExecStartPre=/usr/bin/docker pull portainer/portainer-ce
+        # Privileged mode is required for binding to local socket to work due to SELINUX (https://github.com/portainer/portainer/issues/849)
+        ExecStart=/usr/bin/docker run --privileged=true -d -p 9000:9000 --name %n --restart always -v /var/run/docker.sock:/var/run/docker.sock -v /var/portainer_data:/data portainer/portainer-ce
+        ExecStop=/usr/bin/docker stop -t 15 %n
+
+        [Install]
+        WantedBy=multi-user.target
+
+    # fstrim
     - name: fstrim.timer
       enabled: true
- 
+
     - name: fstrim.service
       dropins:
         - name: override.conf
